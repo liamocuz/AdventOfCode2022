@@ -1,7 +1,7 @@
 import heapq as heap
 from collections import defaultdict
+import itertools
 
-ITERATIONS = 30
 MAX_DISTANCE = 10_000
 START = 'AA'
 
@@ -9,13 +9,15 @@ class Valve:
     def __init__(self, name, rate, connections) -> None:
         self.name = name
         self.flowrate = rate
-        # self.is_open = False
         self.connections = connections
 
     def __repr__(self) -> str:
         return f"{self.flowrate}, {self.connections}"
 
 def build_graph(lines) -> dict:
+    """
+    Create the graph from the input
+    """
     graph = {}
 
     for line in lines:
@@ -28,43 +30,18 @@ def build_graph(lines) -> dict:
 
     return graph
 
-def build_path(path_map: dict, start: str, next: str) -> list:
-    current = next
-    path = []
-    while current != start:
-        path.append(current)
-        current = path_map[current]
 
-    path.append(current)
-    return path[::-1]
-
-
-
-def dijkstras(graph: dict, start: str, time_left: int) -> str:
+def dijkstras(graph: dict, start: str, positives: set)-> str:
     """
-    At each node, do dijkstras and get the best node to go to next
-    This can be done by finding the flowrate / length to get to each node
-
-    Once a node is turned on, then it's flow rate can be set to 0
-    
-    Need to make sure the path is weary of how many iterations are left 
-    If there is a best path but not enough iterations left to get there,
-    then find a shorter path
+    Calculates the shortest path from start node to all other nodes
+    Reuturns a dict that maps path from start to all other positive flowrate valves
     """
     visited = set()
     queue = []
 
-    # will keep track of the path back from any node to the start
-    path_map = {}
-
     # distances will keep track of the min distance to each node
     distances: dict[str, int] = defaultdict(lambda: MAX_DISTANCE)
     distances[start] = 0
-
-    # priorities will be the highest priority node
-    priorities: dict[str, float] = {}
-    priorities[start] = 0.0
-    highest_priority: str = start
 
     # the queue will be used to keep track of next smallest distance
     queue = []
@@ -83,79 +60,93 @@ def dijkstras(graph: dict, start: str, time_left: int) -> str:
 
             new_distance = distances[node] + 1
             if new_distance < distances[conn]:
-                path_map[conn] = node
-                distances[conn] = new_distance + 1
+                distances[conn] = new_distance
 
-                priorities[conn] = float(graph[conn].flowrate * (time_left - distances[conn]))
-                if priorities[conn] > priorities[highest_priority]:
-                    highest_priority = conn
                 heap.heappush(queue, (new_distance, conn))
 
-    # print(f"distances from {start}", dict(distances))
-    # print(f"{priorities}")
-    # print(time_left)
-    pl = [(key, priorities[key]) for key in priorities]
-    pl.sort(key=lambda x: x[1])
-    pl.reverse()
-    # print(dict(distances))
-    # print(pl)
-    # print(f"highest priority: {highest_priority}")
-    # print(f"path map: {path_map}")
-    path = build_path(path_map, start, highest_priority)
-    # print(f"path: {path}")
-    print(start, path_map)
-    # print()
-
-    return path
+    # Return only positive flowrate valves and not self
+    return {key: distances[key] for key in distances if graph[key].flowrate > 0.0 and key in positives and key != start}
 
 
-def simulate_valves(graph: dict[Valve], start: str, iterations: int) -> int:
-    total_flow = 0
-    current_flow = 0
+def simulate_valves(graph: dict[Valve], distances: dict, node: str, visited: set, time_left: int, total_flow: int) -> int:
+    """
+    Does a DFS on all nodes in distances and keeps track of the time and flow computed thus far
+    If the time left is going to be <= 0, skip any further computations from that path
+    """
 
-    iters = iterations
-    current_node = start
+    max_flow = 0
+    for key in distances[node]:
+        if key in visited:
+            continue
 
-    while iters > 0:
-        # print(f"Iterations left: {iters}")
-        path = dijkstras(graph, current_node, iters)
-        current_node = path[-1]
-        travel_dist = len(path)
+        time = time_left - (distances[node][key] + 1)
+        if time <= 0:
+            continue
 
-        total_flow += current_flow * travel_dist
-        current_flow += graph[current_node].flowrate
+        flow = total_flow + graph[key].flowrate * time 
 
-        graph[current_node].flowrate = 0.0
-        if iters - travel_dist < 0:
-            print("ERROR")
-        # print(iters, travel_dist)
-        iters -= travel_dist
-        # print(f"current flow: {current_flow}")
-        # print(f"total flow: {total_flow}")
+        visited.add(key)
+        flow = simulate_valves(graph, distances, key, visited, time, flow)
+        max_flow = max(max_flow, flow)
+        visited.remove(key)
 
-    return total_flow
+    return max(max_flow, total_flow)
 
 
 if __name__ == "__main__":
     """
-    Need to construct a graph using dicts
-    Conduct a dijkstras algorithm where the next move will be made depending on
-    the flow rates of the connections rather than a distance or something traditional
-
-    At each step, do dijkstras to all other nodes finding the highest path / rate score
+    So for part 2, need to run through all combinations of splitting the valves between me and the elephant
+    and running the same algorithm
     """
 
-    file = open("./test.txt", "r")
+    file = open("./input.txt", "r")
     lines = file.read().splitlines()
     file.close()
 
+    # build the graph from the input
     graph = build_graph(lines)
-    # print(graph)
-    pos_flows = [key for key in graph if graph[key].flowrate > 0]
-    print(pos_flows)
-    
-    # 2591 too high
-    # 2426 too high
-    # 2261 too low
-    total_flow = int(simulate_valves(graph, START, ITERATIONS))
-    print(total_flow)
+
+    # build a new graph of only the positive flowrate valves and distances to all other positive flowrate valves
+    positive_valves = [key for key in graph if graph[key].flowrate > 0.0]
+
+    # Part 1
+    ITERATIONS = 30 
+    visited = set()
+    visited.add(START)
+    distances = {key: dijkstras(graph, key, set(positive_valves)) for key in positive_valves}
+    distances[START] = dijkstras(graph, START, set(positive_valves))
+    ans = simulate_valves(graph, distances, START, visited, ITERATIONS, 0) 
+    print(ans)
+
+
+    # Part 2
+    # get all unique combinations of each path either you or the elephant could take
+    items = frozenset(positive_valves)
+    combinations = {frozenset(combination) for combination in itertools.combinations(items, len(items) // 2)}
+    splits = {frozenset((combination, items - combination)) for combination in combinations}
+    splits = [[list(fs) for fs in split] for split in splits]
+
+    # find the max flow if you and elephant each handle separate valves
+    ITERATIONS = 26
+    max_flow = 0
+    for split in splits:
+        my_split = split[0]
+        ele_split = split[1]
+
+        my_distances = {key: dijkstras(graph, key, set(my_split)) for key in my_split}
+        my_distances[START] = dijkstras(graph, START, set(my_split))
+        ele_distances = {key: dijkstras(graph, key, set(ele_split)) for key in ele_split}
+        ele_distances[START] = dijkstras(graph, START, set(ele_split))
+
+        my_visited = set()
+        my_visited.add(START)
+        my_ans = simulate_valves(graph, my_distances, START, my_visited, ITERATIONS, 0)
+
+        ele_visited = set()
+        ele_visited.add(START)
+        ele_ans = simulate_valves(graph, ele_distances, START, ele_visited, ITERATIONS, 0)
+
+        total_ans = my_ans + ele_ans
+        max_flow = max(max_flow, total_ans)
+
+    print(max_flow)
